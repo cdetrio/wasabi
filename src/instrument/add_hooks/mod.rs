@@ -18,6 +18,7 @@ use self::taint_stack::TaintStack;
 use self::taint_stack::GlobalTaintMap;
 //use self::taint_stack::LoopControllers;
 use self::taint_stack::ModFuncLoopControls;
+use self::taint_stack::CallGraph;
 //use self::taint_stack::BrToLoop;
 
 use self::taint_io::TaintIOStack;
@@ -33,7 +34,7 @@ mod taint_io;
 mod hook_map;
 mod duplicate_stack;
 
-type CallGraph = Vec<(usize, usize)>;
+//type SimpleCallGraph = Vec<(usize, usize)>;
 
 /// instruments every instruction in Jalangi-style with a callback that takes inputs, outputs, and
 /// other relevant information.
@@ -64,6 +65,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
     // module_func_taint_flow_maps.set_func_return_taint(fid, return_var_taint_set)
 
     let mut call_graph = CallGraph::new();
+    let mut simple_call_graph: Vec<(usize, usize)> = Vec::new();
 
     // let mut module_function_taints = ModuleFunctionTaints::new();
 
@@ -103,7 +105,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
         // for drop/select monomorphization (cannot determine their input types only from instruction, but need this additional type information)
         let mut type_stack = TypeStack::new();
 
-        let mut taint_stack = TaintStack::new(&mut global_taint_map, &mut mod_func_loop_controls);
+        let mut taint_stack = TaintStack::new(&mut global_taint_map, &mut mod_func_loop_controls, &mut call_graph);
         let mut taint_io_stack = TaintIOStack::new(&mut module_func_taint_flow_maps);
 
 
@@ -314,7 +316,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                     type_stack.instr(&func_ty.into());
 
                     // build a call graph.  then check the call graph for a cycle
-                    call_graph.push((fidx.0, target_func_idx.0));
+                    simple_call_graph.push((fidx.0, target_func_idx.0));
 
                     //println!("call to target_func_idx.0: {:?}", target_func_idx.0);
                     //println!("call to target func import: {:?}", module_info.read().functions[target_func_idx.0]);
@@ -323,9 +325,13 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                         println!("CALLING TO getCallDataSize!!!");
                     }
 
+                    if target_func_idx.0 == 2 {
+                        println!("CALLING TO getCallDataCopy!!!");
+                    }
+
                     // TODO: special handling taint stack for call()
                     //taint_stack.call_instr(&func_ty.into(), instr, target_func_idx);
-                    taint_stack.call_instr(&func_ty.into(), fidx, target_func_idx);
+                    taint_stack.call_instr(&func_ty.into(), fidx, target_func_idx, iidx);
                     taint_io_stack.call_instr(&func_ty.into(), fidx, target_func_idx);
 
                 }
@@ -334,6 +340,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                     taint_stack.instr(&instr.to_type().unwrap());
                     taint_io_stack.instr(&instr.to_type().unwrap());
 
+                    panic!("not handling call_indirects yet...");
                 }
 
 
@@ -478,7 +485,9 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
     */
 
     println!("call graph:");
-    println!("{:?}\n", call_graph);
+    println!("{:?}", simple_call_graph);
+    //println!("{:?}\n", call_graph);
+    call_graph.print();
 
     global_taint_map.print_global_taints();
     

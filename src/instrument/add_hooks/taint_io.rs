@@ -40,11 +40,10 @@ pub struct VarTaintSet(Vec<InputVar>);
 #[derive(Debug)]
 pub struct VarTaintRecord {
    pub flow_var: FlowVarType,
-   pub var_position: InstrPosition,
    pub in_flow_set: Vec<InputVar>,
-
-    
-    // pub instr_ TODO: decide where to save br_if position and loop target
+   pub var_position: InstrPosition,
+   
+    //TODO: decide where to save loop target for FlowVarType::BrIfConditionalVal
 }
 
 

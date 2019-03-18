@@ -45,6 +45,40 @@ impl<'lt> GlobalTaintMap {
 type InstrPosition = Idx<Instr>;
 
 #[derive(Debug)]
+pub struct CallToFunc {
+    source_idx: usize,
+    target_idx: usize,
+    input_taints: Vec<TaintType>,
+    call_pos: InstrPosition,
+}
+
+
+#[derive(Debug)]
+pub struct CallGraph (Vec<CallToFunc>);
+
+
+impl<'lt> CallGraph {
+    pub fn new() -> CallGraph {
+        CallGraph(Vec::new())
+    }
+
+    pub fn push(&mut self, call_to_func: CallToFunc) {
+        self.0.push(call_to_func);
+    }
+
+    pub fn print(self) {
+        for call in self.0 {
+            println!("{:?}", call);
+        }
+        //println!("{:?}\n", self.0);
+        println!("\n");
+    }
+}
+
+
+
+
+#[derive(Debug)]
 pub struct BrToLoop {
     br_conditional_var: TaintType,
     br_position: InstrPosition,
@@ -122,7 +156,7 @@ impl<'lt> ModFuncLoopControls {
 
 
 #[derive(Debug)]
-pub struct TaintStack<'lt> (Vec<TaintStackElement>, HashMap<Idx<wasm::ast::Local>, TaintType>, &'lt mut GlobalTaintMap, &'lt mut ModFuncLoopControls);
+pub struct TaintStack<'lt> (Vec<TaintStackElement>, HashMap<Idx<wasm::ast::Local>, TaintType>, &'lt mut GlobalTaintMap, &'lt mut ModFuncLoopControls, &'lt mut CallGraph);
 
 #[derive(Debug, PartialEq)]
 enum TaintStackElement {
@@ -137,8 +171,8 @@ impl TaintStackElement {
     pub fn to_taint(&self) -> TaintType {
         match *self {
             TaintedVar(taint_ty) => taint_ty,
-            BlockBegin(_block_ty) => TaintType::InputVal,
-            FunctionBegin => TaintType::InputVal,
+            BlockBegin(_block_ty) => TaintType::Undetermined,
+            FunctionBegin => TaintType::Undetermined,
         }
     }
 }
@@ -171,11 +205,11 @@ fn taint_variable(a: TaintType, b: TaintType) -> TaintType {
 
 
 impl<'lt> TaintStack<'lt> {
-    pub fn new(global_taint_map: &'lt mut GlobalTaintMap, mod_func_loop_controls: &'lt mut ModFuncLoopControls) -> Self {
+    pub fn new(global_taint_map: &'lt mut GlobalTaintMap, mod_func_loop_controls: &'lt mut ModFuncLoopControls, call_graph: &'lt mut CallGraph) -> Self {
         println!("TaintStack.new!");
         let local_taints = HashMap::new();
         //let global_taints = global_taint_map
-        TaintStack(vec![FunctionBegin], local_taints, global_taint_map, mod_func_loop_controls)
+        TaintStack(vec![FunctionBegin], local_taints, global_taint_map, mod_func_loop_controls, call_graph)
     }
 
     pub fn push_val(&mut self, ty: TaintType) {
@@ -244,8 +278,8 @@ impl<'lt> TaintStack<'lt> {
                     self.push_val(*local_taint);
                 } else {
                     // if the local hasn't been previously set with SetLocal, then it is an input param.
-                    println!("getting unset local, must be an input param. pushing to taint stack {:?}", TaintType::InputVal);
-                    self.push_val(TaintType::InputVal);
+                    println!("getting unset local, must be an input param. pushing to taint stack {:?}", TaintType::Undetermined);
+                    self.push_val(TaintType::Undetermined);
                 }
             },
             wasm::ast::highlevel::LocalOp::SetLocal => {
@@ -298,7 +332,7 @@ impl<'lt> TaintStack<'lt> {
     }
 
     //pub fn call_instr(&mut self, ty: &InstrType, instr: wasm::ast::highlevel::Instr, target_idx: Idx<wasm::ast::highlevel::Function>) {
-    pub fn call_instr(&mut self, ty: &InstrType, source_idx: Idx<wasm::ast::highlevel::Function>, target_idx: Idx<wasm::ast::highlevel::Function>) {
+    pub fn call_instr(&mut self, ty: &InstrType, source_idx: Idx<wasm::ast::highlevel::Function>, target_idx: Idx<wasm::ast::highlevel::Function>, call_pos: InstrPosition) {
         println!("TaintStack.call_instr source_idx: {:?}  target_idx: {:?}  ty: {:?}  ", source_idx, target_idx, ty);
         if ty.inputs.len() > 0 {
             println!("input params for called func will have taint stack:");
@@ -308,13 +342,34 @@ impl<'lt> TaintStack<'lt> {
         }
 
         // TODO: propagate call param taints to called function.
+
+        // call_graph is at self.4
+        //call_graph.push((fidx.0, target_func_idx.0));
+        let mut input_taint_vec = Vec::new();
+
         for &_input_ty in ty.inputs.iter() {
-            self.pop_val();
+            input_taint_vec.push(self.pop_val());
         }
+
+        let call_to_func = CallToFunc {
+            input_taints: input_taint_vec,
+            source_idx: source_idx.0,
+            target_idx: target_idx.0,
+            call_pos: call_pos,
+        };
+        self.4.push(call_to_func);
+
+        //println!("Calling to function")
 
         // TODO: look up getCallDataSize instead of using index 3
         if target_idx.0 == 3 {
             self.push_val(TaintType::InputSize);
+        } else if target_idx.0 == 2 {
+            if ty.results.len() == 0 {
+                println!("Call to callDataCopy.  no results");
+            } else {
+                panic!("Call to callDataCopy and have result length?!");
+            }
         } else {
             // TODO: get taint from other functions
             // this will be done using taint IO flow maps
