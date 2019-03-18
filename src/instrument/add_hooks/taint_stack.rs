@@ -34,7 +34,7 @@ impl<'lt> GlobalTaintMap {
         let global_taints = HashMap::new();
         GlobalTaintMap(global_taints)
     }
-    
+
     pub fn print_global_taints(&mut self) {
         println!("global taints: {:?}", self.0)
     }
@@ -59,7 +59,7 @@ impl LoopControllers {
     fn new() -> LoopControllers {
         LoopControllers(Vec::new())
     }
-    
+
     fn push(&mut self,br_to_loop: BrToLoop) {
         self.0.push(br_to_loop);
     }
@@ -214,7 +214,7 @@ impl<'lt> TaintStack<'lt> {
             Some(FunctionBegin) => panic!("expected ValType on type stack, but got function begin marker indicating empty block stack; full type stack was {:?}", self.0),
         }
     }
-    
+
     pub fn memory_store_instr(&mut self, op: wasm::ast::highlevel::StoreOp, memarg: wasm::ast::Memarg ) {
         // mem store ops pop two vals off the stack and push 0
         
@@ -224,7 +224,7 @@ impl<'lt> TaintStack<'lt> {
         let _i_offset = self.pop_val();
         // actual offset is i + memarg.offset
     }
-    
+
     pub fn memory_load_instr(&mut self, op: wasm::ast::highlevel::LoadOp, memarg: wasm::ast::Memarg ) {
         // mem loads pop one val off the stack and push one
         let _i_offset = self.pop_val();

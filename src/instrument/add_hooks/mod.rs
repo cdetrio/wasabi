@@ -33,6 +33,8 @@ mod taint_io;
 mod hook_map;
 mod duplicate_stack;
 
+type CallGraph = Vec<(usize, usize)>;
+
 /// instruments every instruction in Jalangi-style with a callback that takes inputs, outputs, and
 /// other relevant information.
 pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<String> {
@@ -55,11 +57,13 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
     let hooks = HookMap::new(&module);
 
     let mut global_taint_map = GlobalTaintMap::new();
-    
+
     let mut mod_func_loop_controls = ModFuncLoopControls::new();
  
     let mut module_func_taint_flow_maps = ModuleFuncTaintFlowMaps::new();
     // module_func_taint_flow_maps.set_func_return_taint(fid, return_var_taint_set)
+
+    let mut call_graph = CallGraph::new();
 
     // let mut module_function_taints = ModuleFunctionTaints::new();
 
@@ -249,6 +253,11 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                 Br(target_label) => {
                     let br_target = block_stack.br_target(target_label);
 
+                    if br_target.absolute_instr.0 < iidx.0 {
+                        panic!("wow weird!! an infinite loop?");
+                        // if its not an infinite loop, then there is a br_if prior to this br. in tihs case, the br_if prior is the loop controller
+                    }
+
                     // stop instrumentation for this block: we do not need to look at dead code
                     unreachable += 1;
                 }
@@ -303,6 +312,9 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                 Call(target_func_idx) => {
                     let ref func_ty = module_info.read().functions[target_func_idx.0].type_;
                     type_stack.instr(&func_ty.into());
+
+                    // build a call graph.  then check the call graph for a cycle
+                    call_graph.push((fidx.0, target_func_idx.0));
 
                     //println!("call to target_func_idx.0: {:?}", target_func_idx.0);
                     //println!("call to target func import: {:?}", module_info.read().functions[target_func_idx.0]);
@@ -464,6 +476,9 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
 
     Some(generate_js(module_info.into_inner(), &js_hooks))
     */
+
+    println!("call graph:");
+    println!("{:?}\n", call_graph);
 
     global_taint_map.print_global_taints();
     
