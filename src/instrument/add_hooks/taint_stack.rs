@@ -181,7 +181,6 @@ impl TaintStackElement {
 fn do_binary_op(op: wasm::ast::highlevel::NumericOp, a: wasm::ast::Val, b: wasm::ast::Val) -> wasm::ast::Val {
     match op {
         wasm::ast::highlevel::NumericOp::I32Add => {
-            //println!("do add on {:?} and {:?}", a, b);
             match (a, b) {
                 (wasm::ast::Val::I32(a), wasm::ast::Val::I32(b)) => {
                     wasm::ast::Val::I32(a + b)
@@ -190,11 +189,35 @@ fn do_binary_op(op: wasm::ast::highlevel::NumericOp, a: wasm::ast::Val, b: wasm:
             }
         },
         wasm::ast::highlevel::NumericOp::I32Sub => {
-            //println!("do sub on {:?} and {:?}", a, b);
             match (a, b) {
                 (wasm::ast::Val::I32(a), wasm::ast::Val::I32(b)) => {
                     // TODO: check that a - b is right and not b - a
                     wasm::ast::Val::I32(a - b)
+                },
+                _ => panic!("should never happen on validated module!")
+            }
+        },
+        wasm::ast::highlevel::NumericOp::I32Shl => {
+            match (a, b) {
+                (wasm::ast::Val::I32(a), wasm::ast::Val::I32(b)) => {
+                    // TODO: check that order is right
+                    use std::ops::Shl;
+                    let mask = 0x1F;
+                    wasm::ast::Val::I32(a.shl(b & mask))
+                },
+                _ => panic!("should never happen on validated module!")
+            }
+        },
+        wasm::ast::highlevel::NumericOp::I32LtU => {
+            match (a, b) {
+                (wasm::ast::Val::I32(a), wasm::ast::Val::I32(b)) => {
+                    // TODO: check that order is right
+                    if (a < b) {
+                        wasm::ast::Val::I32(1)
+                    } else {
+                        wasm::ast::Val::I32(0)
+                    }
+                    
                 },
                 _ => panic!("should never happen on validated module!")
             }
