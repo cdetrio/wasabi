@@ -526,7 +526,7 @@ impl<'lt> TaintIOStack<'lt> {
         
         // final taint flow graph type is VarTaintSet
         
-        println!("return_instr.  iidx: {:?}  taint io stack: {:?}", iidx, self.print_taint_stack());
+        println!("TaintIOStack.return_instr.  iidx: {:?}  taint io stack: {:?}", iidx, self.print_taint_stack());
 
         let return_val_stack_el = self.pop_val();
         let return_val_taints = VarTaintSet::from(return_val_stack_el);

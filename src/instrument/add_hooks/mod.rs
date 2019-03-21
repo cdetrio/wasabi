@@ -82,7 +82,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
 
         let mut doing_main = false;
         let fidx_typed: Idx<Function> = fidx;
-        println!("--------------------------------");
+        println!("\n--------------------------------");
         println!("doing function... fidx:{:?}", fidx_typed.0);
         if fidx_typed.0 == 7 {
             println!("doing main function!!");
@@ -165,6 +165,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
             let location = (fidx.to_const(), iidx.to_const());
 
             println!("doing instr: {:?}", instr);
+            // doing instr: Const(I32(2147483647))
 
             /*
              * add calls to hooks, typical instructions inserted for (not necessarily in this order if that saves us a local or so):
@@ -293,6 +294,10 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
 
                 }
                 BrTable(ref target_table, default_target) => {
+                    // TODO: check if any targets in the table are loop instructions
+                    println!("BrTable target_table: {:?}", target_table);
+                    panic!("BrTable not implemented.");
+                    
                     type_stack.instr(&InstrType::new(&[I32], &[]));
                     taint_stack.instr(&InstrType::new(&[I32], &[]));
                     taint_io_stack.instr(&InstrType::new(&[I32], &[]));
@@ -303,10 +308,12 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                 /* Control Instructions: Calls & Returns */
 
                 Return => {
+                    println!("mod.rs return...");
                     type_stack.instr(&InstrType::new(&[], &function.type_.results));
-                    taint_stack.instr(&InstrType::new(&[], &function.type_.results));
+                    //taint_stack.instr(&InstrType::new(&[], &function.type_.results));
                     //taint_io_stack.instr(&InstrType::new(&[], &function.type_.results));
 
+                    taint_stack.return_instr(&InstrType::new(&[], &function.type_.results), fidx, iidx);
                     taint_io_stack.return_instr(&InstrType::new(&[], &function.type_.results), fidx, iidx);
 
                     unreachable = 1;
@@ -360,7 +367,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
 
                     let taint_ty = taint_stack.pop_val();
                     taint_stack.push_val(taint_ty);
-                    
+
                     let taint_io_ty = taint_io_stack.pop_val();
                     taint_io_stack.push_val(taint_io_ty);
 
@@ -429,7 +436,10 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                 Const(val) => {
                     type_stack.instr(&instr.to_type().unwrap());
 
-                    taint_stack.instr(&instr.to_type().unwrap());
+                    println!("Const val {:?}:", val);
+
+                    //taint_stack.instr(&instr.to_type().unwrap());
+                    taint_stack.const_instr(&instr.to_type().unwrap(), val);
                     taint_io_stack.instr(&instr.to_type().unwrap());
 
                     //instrumented_body.push(instr.clone());

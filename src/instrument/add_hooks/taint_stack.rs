@@ -17,10 +17,10 @@ use super::block_stack;
 // for a value to remain constant, it must only ever be tainted by other constants
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum TaintType {
-    Constant, // value is derived only from constant values
+    Constant(u64), // value is derived only from constant values
     InputSize, // value is derived from getCallDataSize or constant values
     InputVal, // value is derived from input data values
-    Undetermined, // from a function that hasn't been passed yet
+    Undetermined, // value is from a function that hasn't been analyzed yet
     MemoryVal, // temporary until memory taint tracking is implemented. just lets us know what we're missing
 }
 
@@ -177,6 +177,8 @@ impl TaintStackElement {
     }
 }
 
+
+
 fn taint_variable(a: TaintType, b: TaintType) -> TaintType {
     //let result = (a, b);
     match (a, b) {
@@ -184,7 +186,6 @@ fn taint_variable(a: TaintType, b: TaintType) -> TaintType {
         _ if a < b => b, // b dominates a
         _ => a, // both equal
     }
-    
     /*
     match (a, b) {
         (TaintType::Constant, TaintType::Constant) => TaintType::Constant,
@@ -251,12 +252,20 @@ impl<'lt> TaintStack<'lt> {
 
     pub fn memory_store_instr(&mut self, op: wasm::ast::highlevel::StoreOp, memarg: wasm::ast::Memarg ) {
         // mem store ops pop two vals off the stack and push 0
-        
+
         // TODO: track memory offset taints
-        
+
+        // the num of bytes of in memory that will be written to is dependent on the store op type (store8, store16, etc.)
+        // and the type of the val to store (i32 is 4 bytes, i64 is 8 bytes)
+        // if op is store8, then N=8 and the value = v mod 2**N (store first byte of the i32 or i64)
+        // if op is generic store (N is not part of the instruction), then num of bytes is just the argument size (i32 or i64)
+
         let _val_to_store = self.pop_val();
         let _i_offset = self.pop_val();
         // actual offset is i + memarg.offset
+        
+        println!("TaintStack.memory_store memarg: {:?}", memarg);
+        println!("TaintStack.memory_store _i_offset: {:?}", _i_offset);
     }
 
     pub fn memory_load_instr(&mut self, op: wasm::ast::highlevel::LoadOp, memarg: wasm::ast::Memarg ) {
@@ -318,8 +327,8 @@ impl<'lt> TaintStack<'lt> {
                     self.push_val(*global_taint);
                 } else {
                     // if the global hasn't been previously set with SetGlobal, then it is a constant.
-                    println!("global is {:?}. pushing to taint stack", TaintType::Constant);
-                    self.push_val(TaintType::Constant);
+                    println!("global is {:?}. pushing to taint stack", TaintType::Constant(0));
+                    self.push_val(TaintType::Constant(0));
                 }
             },
             wasm::ast::highlevel::GlobalOp::SetGlobal => {
@@ -361,6 +370,11 @@ impl<'lt> TaintStack<'lt> {
 
         //println!("Calling to function")
 
+        if target_idx.0 == 2 {
+            // calling callDataCopy
+            // callDataCopy will taint memory segment with tainttype `inputVal`
+        }
+
         // TODO: look up getCallDataSize instead of using index 3
         if target_idx.0 == 3 {
             self.push_val(TaintType::InputSize);
@@ -379,10 +393,63 @@ impl<'lt> TaintStack<'lt> {
         }
     }
 
-    pub fn const_instr(&mut self, ty: &InstrType) {
-        let mut result_taint = TaintType::Constant;
+    pub fn const_instr(&mut self, ty: &InstrType, val: wasm::ast::Val) {
+        println!("const_isntr val: {:?}", val);
+        let mut result_taint = TaintType::Constant(0);
         self.push_val(result_taint);
     }
+
+    pub fn return_instr(&mut self, ty: &InstrType, source_idx: Idx<wasm::ast::highlevel::Function>, iidx: InstrPosition) {
+        //  taint_io_stack.return_instr(&InstrType::new(&[], &function.type_.results), fidx, target_func_idx);
+        
+        // with a return, we have enough info to save the final taint flow graph for the function.
+        // save in the module taint struct, so other functions can lookup this graph when they call this func
+        
+        // wasm funcs only return one value, so the taint flow graph is simply one vector
+        // the vector is a list of the input params and globals that taint the return val
+        
+        // final taint flow graph type is VarTaintSet
+
+        //println!("TaintStack.return_instr.  iidx: {:?} return_val_stack_el: {:?}", iidx, return_val_stack_el);
+        if ty.results.len() == 0 {
+            println!("TaintStack.return_instr.  iidx: {:?}.  no return vals.", iidx);
+        }
+        else if ty.results.len() == 1 {
+            let return_val_stack_el = self.pop_val();
+            println!("TaintStack.return_instr.  iidx: {:?} return_val_stack_el: {:?}", iidx, return_val_stack_el);
+        }
+        else {
+            panic!("return cant have more than 1 result");
+        }
+
+        // nothing needs to be pushed onto the stack.
+        // also anything else on the type stack will be dropped anyway.
+
+        //let return_val_taints = VarTaintSet::from(return_val_stack_el);
+        //let return_val_taints_copy = return_val_taints.clone_vector();
+
+        
+        /*
+        if return_val_taints_copy.to_vec().len() > 0 {
+            println!("got a return on function {:?}. saving return_val_taints: {:?}", source_idx, return_val_taints);
+            self.3.save_func_return_taint(source_idx, return_val_taints, iidx);
+        } else {
+            if ty.results.len() > 0 {
+                println!("ERROR?? function has return type but no taint found on the stack.");
+            } else {
+                println!("function {:?} has no return vals.", source_idx);
+            }
+        }
+        */
+
+
+        // todos from taint_io.rs:
+        // TODO: save location of return with the taint set
+        // TODO: handle when func has multiple branches/returns
+        // TODO: track taint flow through memory
+    }
+
+
 
     /// convenience, pops and validates input_tys, then pushes the result_tys
     pub fn instr(&mut self, ty: &InstrType) {
@@ -390,7 +457,8 @@ impl<'lt> TaintStack<'lt> {
 
         // *.const ops have ty.inputs.len() == 0
         if ty.inputs.len() == 0 && ty.results.len() == 1 {
-            self.const_instr(ty);
+            panic!("Got something here that wasnt handled by const!!");
+            //self.const_instr(ty);
         } else {
             let mut result_taint: Option<TaintType> = None;
             // TODO: use reducer instead of iter here??
@@ -413,7 +481,6 @@ impl<'lt> TaintStack<'lt> {
                 self.push_val(result_taint.unwrap());
             }
         }
-
     }
 
     pub fn begin(&mut self, block_ty: BlockType) {
