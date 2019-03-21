@@ -450,7 +450,7 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                     type_stack.instr(&ty);
 
                     println!("Numeric op {:?} results length: {:?}", op, ty.results.len());
-                    taint_stack.instr(&ty);
+                    taint_stack.numeric_instr(op, &ty);
                     taint_io_stack.instr(&ty);
 
                 }

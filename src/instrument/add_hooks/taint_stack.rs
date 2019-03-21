@@ -17,7 +17,7 @@ use super::block_stack;
 // for a value to remain constant, it must only ever be tainted by other constants
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum TaintType {
-    Constant(u64), // value is derived only from constant values
+    Constant(wasm::ast::Val), // value is derived only from constant values
     InputSize, // value is derived from getCallDataSize or constant values
     InputVal, // value is derived from input data values
     Undetermined, // value is from a function that hasn't been analyzed yet
@@ -178,6 +178,33 @@ impl TaintStackElement {
 }
 
 
+fn do_binary_op(op: wasm::ast::highlevel::NumericOp, a: wasm::ast::Val, b: wasm::ast::Val) -> wasm::ast::Val {
+    match op {
+        wasm::ast::highlevel::NumericOp::I32Add => {
+            //println!("do add on {:?} and {:?}", a, b);
+            match (a, b) {
+                (wasm::ast::Val::I32(a), wasm::ast::Val::I32(b)) => {
+                    wasm::ast::Val::I32(a + b)
+                },
+                _ => panic!("should never happen on validated module!")
+            }
+        },
+        wasm::ast::highlevel::NumericOp::I32Sub => {
+            //println!("do sub on {:?} and {:?}", a, b);
+            match (a, b) {
+                (wasm::ast::Val::I32(a), wasm::ast::Val::I32(b)) => {
+                    // TODO: check that a - b is right and not b - a
+                    wasm::ast::Val::I32(a - b)
+                },
+                _ => panic!("should never happen on validated module!")
+            }
+        },
+        _ => panic!("unimplemented binary op! {:?}", op)
+    }
+}
+
+//fn propagateConstVals(stack_els: )
+
 
 fn taint_variable(a: TaintType, b: TaintType) -> TaintType {
     //let result = (a, b);
@@ -327,8 +354,8 @@ impl<'lt> TaintStack<'lt> {
                     self.push_val(*global_taint);
                 } else {
                     // if the global hasn't been previously set with SetGlobal, then it is a constant.
-                    println!("global is {:?}. pushing to taint stack", TaintType::Constant(0));
-                    self.push_val(TaintType::Constant(0));
+                    println!("global is {:?}. pushing to taint stack", TaintType::Constant(wasm::ast::Val::I32(7777)));
+                    self.push_val(TaintType::Constant(wasm::ast::Val::I32(7777)));
                 }
             },
             wasm::ast::highlevel::GlobalOp::SetGlobal => {
@@ -394,23 +421,13 @@ impl<'lt> TaintStack<'lt> {
     }
 
     pub fn const_instr(&mut self, ty: &InstrType, val: wasm::ast::Val) {
-        println!("const_isntr val: {:?}", val);
-        let mut result_taint = TaintType::Constant(0);
+        println!("TaintStack.const_isntr val: {:?}", val);
+        let mut result_taint = TaintType::Constant(val);
         self.push_val(result_taint);
     }
 
     pub fn return_instr(&mut self, ty: &InstrType, source_idx: Idx<wasm::ast::highlevel::Function>, iidx: InstrPosition) {
-        //  taint_io_stack.return_instr(&InstrType::new(&[], &function.type_.results), fidx, target_func_idx);
-        
-        // with a return, we have enough info to save the final taint flow graph for the function.
-        // save in the module taint struct, so other functions can lookup this graph when they call this func
-        
-        // wasm funcs only return one value, so the taint flow graph is simply one vector
-        // the vector is a list of the input params and globals that taint the return val
-        
-        // final taint flow graph type is VarTaintSet
 
-        //println!("TaintStack.return_instr.  iidx: {:?} return_val_stack_el: {:?}", iidx, return_val_stack_el);
         if ty.results.len() == 0 {
             println!("TaintStack.return_instr.  iidx: {:?}.  no return vals.", iidx);
         }
@@ -425,31 +442,52 @@ impl<'lt> TaintStack<'lt> {
         // nothing needs to be pushed onto the stack.
         // also anything else on the type stack will be dropped anyway.
 
-        //let return_val_taints = VarTaintSet::from(return_val_stack_el);
-        //let return_val_taints_copy = return_val_taints.clone_vector();
-
-        
-        /*
-        if return_val_taints_copy.to_vec().len() > 0 {
-            println!("got a return on function {:?}. saving return_val_taints: {:?}", source_idx, return_val_taints);
-            self.3.save_func_return_taint(source_idx, return_val_taints, iidx);
-        } else {
-            if ty.results.len() > 0 {
-                println!("ERROR?? function has return type but no taint found on the stack.");
-            } else {
-                println!("function {:?} has no return vals.", source_idx);
-            }
-        }
-        */
-
-
         // todos from taint_io.rs:
         // TODO: save location of return with the taint set
         // TODO: handle when func has multiple branches/returns
         // TODO: track taint flow through memory
     }
 
+    pub fn numeric_instr(&mut self, op: wasm::ast::highlevel::NumericOp, ty: &InstrType) {
+        println!("TaintStack.numeric_instr.. op: {:?}   inputs.len(): {:?}", op, ty.inputs.len());
 
+        if ty.inputs.len() == 1 {
+            let taint_elem_1 = self.pop_val();
+            println!("inputs: a={:?}", taint_elem_1);
+            match taint_elem_1 {
+                TaintType::Constant(val) => {
+                    println!("yay got constant!");
+                    panic!("to be implemented.");
+                },
+                _ => {
+                    self.push_val(taint_elem_1);
+                    self.instr(ty);
+                    return;
+                }
+            }
+        } else if ty.inputs.len() == 2 {
+            let taint_elem_1 = self.pop_val();
+            let taint_elem_2 = self.pop_val();
+            println!("inputs: a={:?}   b={:?}", taint_elem_1, taint_elem_2);
+            match (taint_elem_1, taint_elem_2) {
+                (TaintType::Constant(val1), TaintType::Constant(val2)) => {
+                    println!("yay got two constants!");
+                    //panic!("to be implemented.");
+                    let result = do_binary_op(op, val1, val2);
+                    self.push_val(TaintType::Constant(result));
+                    return;
+                },
+                (_,_) => {
+                    self.push_val(taint_elem_2);
+                    self.push_val(taint_elem_1);
+                    self.instr(ty);
+                    return;
+                }
+            }
+        }
+
+        panic!("unimplemented.");
+    }
 
     /// convenience, pops and validates input_tys, then pushes the result_tys
     pub fn instr(&mut self, ty: &InstrType) {
