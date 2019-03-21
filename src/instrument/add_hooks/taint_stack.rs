@@ -134,6 +134,8 @@ impl<'lt> ModFuncLoopControls {
         println!("If a loop-targeting br_if has a conditional var that is taint class `inputSize`, then runtime is dependendent on input length, i.e. only input length and not on input value (second-best case for upper-bound analysis)");
         println!("If a loop-targeting br_if has a conditional var that is taint calss `inputVal`, then runtime is dependent on input value (worst-case complexity, most difficult to find upper bound)");
         println!("note that functions other than main() are still inaccurate, because we aren't yet propagating taints across functions. Right now `InputVal` means it is tainted by a function input param. But all functions are ultimately called from main(), so their input params' taints should flow from the vars passed from main. We need to propagate taints from main() to all other functions and back, in order to see the correct taint of loop-targeting br_ifs in all other functions. TODO: fix this.\n");
+
+        let mut has_constant_infinite_loop = false;
         let mut key_nums = Vec::new();
         for key in self.0.keys() {
             key_nums.push(key);
@@ -144,6 +146,19 @@ impl<'lt> ModFuncLoopControls {
             let loop_controls = self.0.get(&key).unwrap();
             for control in &loop_controls.0 {
                 println!("function {:?} loop control: {:?}", key, control);
+
+                match control.br_conditional_var {
+                    TaintType::Constant(v) => {
+                        match v {
+                            wasm::ast::Val::I32(1) => {
+                                println!("DANGER will robinson! wasm has an infinite loop regardless of input!! do not run!!!");
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {},
+                } // done with constant infinite loop check
+
             }
             
         }
