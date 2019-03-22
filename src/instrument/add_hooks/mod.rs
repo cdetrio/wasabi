@@ -21,6 +21,7 @@ use self::taint_stack::ModFuncLoopControls;
 use self::taint_stack::CallGraph;
 //use self::taint_stack::BrToLoop;
 use self::taint_stack::TaintType;
+use self::taint_stack::TaintTypeOrFormula;
 
 
 use self::taint_io::TaintIOStack;
@@ -377,8 +378,9 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
 
                     let taint_ty = taint_stack.pop_val();
                     //taint_stack.push_val(taint_ty);
-                    taint_stack.push_val(TaintType::from(taint_ty));
-                    
+                    //taint_stack.push_val(TaintType::from(taint_ty));
+                    taint_stack.push_val(TaintTypeOrFormula::TaintedVar(<TaintType>::from(taint_ty)));
+
 
                     let taint_io_ty = taint_io_stack.pop_val();
                     taint_io_stack.push_val(taint_io_ty);

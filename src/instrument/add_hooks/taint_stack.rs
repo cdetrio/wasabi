@@ -22,6 +22,30 @@ type OpChain = Vec<OpAndInputs>;
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct InputSizeFormula (OpChain);
 
+
+/*
+fn clone_input_size_formula(orig: &InputSizeFormula) -> InputSizeFormula {
+    let new_vec = orig.0.iter().map(|&val| {
+            let new_var = match val {
+                InputVar::LocalVar(l_idx) => {
+                    InputVar::LocalVar(l_idx.clone())
+                },
+                InputVar::GlobalVar(g_idx) => {
+                    InputVar::GlobalVar(g_idx.clone())
+                },
+                InputVar::Constant => InputVar::Constant,
+                InputVar::MemoryVal => InputVar::MemoryVal,
+                InputVar::InputSize => InputVar::InputSize,
+                InputVar::Undetermined => InputVar::Undetermined,
+            };
+            new_var
+     }).collect();
+
+    new_vec
+}
+*/
+
+
 // TaintType enum is ordered by dominance. when two values are combined in a wasm instruction, the output type is the dominant type.
 // so InputVal can taint anything lower (inputSize and Constant)
 // for a value to remain constant, it must only ever be tainted by other constants
@@ -178,11 +202,12 @@ impl<'lt> ModFuncLoopControls {
 }
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TaintTypeOrFormula {
     TaintedVar(TaintType),
     InputSizeFormula(OpChain),
 }
+
 
 
 
@@ -193,6 +218,7 @@ impl From<&mut TaintTypeOrFormula> for TaintType {
                 *taint_ty
             },
             TaintTypeOrFormula::InputSizeFormula(_opchain) => {
+                println!("converting InputSizeFormula to InputSize.  NONO");
                 TaintType::InputSize
             }
         }
@@ -207,6 +233,7 @@ impl From<TaintTypeOrFormula> for TaintType {
                 taint_ty
             },
             TaintTypeOrFormula::InputSizeFormula(_opchain) => {
+                println!("converting InputSizeFormula to inputSize. NONO");
                 TaintType::InputSize
             }
         }
@@ -223,17 +250,41 @@ impl From<TaintType> for TaintTypeOrFormula {
 
 
 
+/*
+fn clone_tainttype_or_formula(orig: &TaintTypeOrFormula) -> TaintTypeOrFormula {
+    let new_vec = orig.0.iter().map(|&val| {
+            let new_var = match val {
+                InputVar::LocalVar(l_idx) => {
+                    InputVar::LocalVar(l_idx.clone())
+                },
+                InputVar::GlobalVar(g_idx) => {
+                    InputVar::GlobalVar(g_idx.clone())
+                },
+                InputVar::Constant => InputVar::Constant,
+                InputVar::MemoryVal => InputVar::MemoryVal,
+                InputVar::InputSize => InputVar::InputSize,
+                InputVar::Undetermined => InputVar::Undetermined,
+            };
+            new_var
+     }).collect();
+
+    new_vec
+}
+*/
+
+
+
+
 
 
 #[derive(Debug)]
-pub struct TaintStack<'lt> (Vec<TaintStackElement>, HashMap<Idx<wasm::ast::Local>, TaintType>, &'lt mut GlobalTaintMap, &'lt mut ModFuncLoopControls, &'lt mut CallGraph);
+pub struct TaintStack<'lt> (Vec<TaintStackElement>, HashMap<Idx<wasm::ast::Local>, TaintTypeOrFormula>, &'lt mut GlobalTaintMap, &'lt mut ModFuncLoopControls, &'lt mut CallGraph);
 
 #[derive(Debug, PartialEq)]
 enum TaintStackElement {
     TaintedVar(TaintType),
     BlockBegin(BlockType),
     FunctionBegin,
-    InputSizeFormula(OpChain),
 // TODO see add_hooks/mod.rs
 //    Unreachable,
 }
@@ -244,7 +295,27 @@ impl TaintStackElement {
             TaintedVar(taint_ty) => *taint_ty,
             BlockBegin(_block_ty) => TaintType::Undetermined,
             FunctionBegin => TaintType::Undetermined,
-            TaintStackElement::InputSizeFormula(_op_chain) => TaintType::InputSize,
+            /*
+            TaintStackElement::InputSizeFormula(_op_chain) => {
+                println!("TaintStackElement InputSizeFormula converting to InputSize. NONO");
+                TaintType::InputSize
+            },
+            */
+        }
+    }
+
+    pub fn to_taint_or_formula(&self) -> TaintTypeOrFormula {
+        match self {
+            TaintedVar(taint_ty) => TaintTypeOrFormula::TaintedVar(*taint_ty),
+            // TODO: panic on blockbegin and functionbegin?
+            BlockBegin(_block_ty) => TaintType::Undetermined.into(),
+            FunctionBegin => TaintType::Undetermined.into(),
+            /*
+            TaintStackElement::InputSizeFormula(_op_chain) => {
+                //println!("TaintStackElement InputSizeFormula converting to InputSize. NONO");
+                TaintTypeOrFormula::InputSizeFormula(_op_chain.to_vec())
+            },
+            */
         }
     }
 }
@@ -335,11 +406,10 @@ impl<'lt> TaintStack<'lt> {
         TaintStack(vec![FunctionBegin], local_taints, global_taint_map, mod_func_loop_controls, call_graph)
     }
 
-    pub fn push_val(&mut self, ty: TaintType) {
-        println!("TaintStack.push_val: {:?}", ty);
-    //pub fn push_val(&mut self, ttof: TaintTypeOrFormula) {
-        //println!("TaintStack.push_val ttof {:?}", ttof);
-        self.0.push(TaintedVar(ty))
+    pub fn push_val(&mut self, ttof: TaintTypeOrFormula) {
+        println!("TaintStack.push_val ttof {:?}", ttof);
+        self.0.push(TaintedVar(ttof.into()))
+        //self.0.push(ttof)
         //self.0.push(ty)
     }
 
@@ -369,7 +439,7 @@ impl<'lt> TaintStack<'lt> {
         match self.0.pop() {
             None => panic!("tried to pop from empty type stack"),
             Some(TaintedVar(taint_ty)) => taint_ty.into(),
-            Some(TaintStackElement::InputSizeFormula(opchain)) => TaintTypeOrFormula::InputSizeFormula(opchain),
+            //Some(TaintStackElement::InputSizeFormula(opchain)) => TaintTypeOrFormula::InputSizeFormula(opchain),
             Some(BlockBegin(_)) => panic!("expected ValType on type stack, but got block begin marker indicating empty block stack; full type stack was {:?}", self.0),
             Some(FunctionBegin) => panic!("expected ValType on type stack, but got function begin marker indicating empty block stack; full type stack was {:?}", self.0),
         }
@@ -388,7 +458,7 @@ impl<'lt> TaintStack<'lt> {
         let _val_to_store = self.pop_val();
         let _i_offset = self.pop_val();
         // actual offset is i + memarg.offset
-        
+
         println!("TaintStack.memory_store memarg: {:?}", memarg);
         println!("TaintStack.memory_store _i_offset: {:?}", _i_offset);
     }
@@ -398,7 +468,7 @@ impl<'lt> TaintStack<'lt> {
         let _i_offset = self.pop_val();
         // memory position is i + memarg.offset
         // TODO: get taint of memory position
-        self.push_val(TaintType::MemoryVal);
+        self.push_val(TaintType::MemoryVal.into());
     }
 
     pub fn local_instr(&mut self, op: wasm::ast::highlevel::LocalOp, local_idx: Idx<wasm::ast::Local>) {
@@ -409,11 +479,12 @@ impl<'lt> TaintStack<'lt> {
                 if self.1.contains_key(&local_idx) {
                     let local_taint = self.1.get(&local_idx).unwrap();
                     println!("local var has taint: {:?}.  pushing to taint stack..", local_taint);
-                    self.push_val(*local_taint);
+                    let cloned_taint = local_taint.clone();
+                    self.push_val(cloned_taint);
                 } else {
                     // if the local hasn't been previously set with SetLocal, then it is an input param.
                     println!("getting unset local, must be an input param. pushing to taint stack {:?}", TaintType::Undetermined);
-                    self.push_val(TaintType::Undetermined);
+                    self.push_val(TaintType::Undetermined.into());
                 }
             },
             wasm::ast::highlevel::LocalOp::SetLocal => {
@@ -424,10 +495,16 @@ impl<'lt> TaintStack<'lt> {
                 self.1.insert(local_idx, taint_elem.into());
             },
             wasm::ast::highlevel::LocalOp::TeeLocal => {
+                /*
                 let taint_elem = self.0.last().unwrap();
                 let tainted_var_ty = taint_elem.to_taint();
                 println!("teeing local. stack var has taint: {:?}", tainted_var_ty);
                 self.1.insert(local_idx, tainted_var_ty);
+                */
+                let taint_elem = self.0.last().unwrap();
+                //let tainted_var_ty = taint_elem.to_taint();
+                println!("teeing local. stack var has taint: {:?}", taint_elem);
+                self.1.insert(local_idx, taint_elem.to_taint_or_formula());
                 /*
                 match *taint_elem {
                     TaintType => {
@@ -451,11 +528,11 @@ impl<'lt> TaintStack<'lt> {
                 if (self.2).0.contains_key(&global_idx) {
                     let global_taint = (self.2).0.get(&global_idx).unwrap();
                     println!("global var has taint: {:?}.  pushing to taint stack..", global_taint);
-                    self.push_val(*global_taint);
+                    self.push_val(TaintTypeOrFormula::TaintedVar(*global_taint));
                 } else {
                     // if the global hasn't been previously set with SetGlobal, then it is a constant.
                     println!("global is {:?}. pushing to taint stack", TaintType::Constant(wasm::ast::Val::I32(7777)));
-                    self.push_val(TaintType::Constant(wasm::ast::Val::I32(7777)));
+                    self.push_val(TaintType::Constant(wasm::ast::Val::I32(7777)).into());
                 }
             },
             wasm::ast::highlevel::GlobalOp::SetGlobal => {
@@ -505,7 +582,9 @@ impl<'lt> TaintStack<'lt> {
         // TODO: look up getCallDataSize instead of using index 3
         if target_idx.0 == 3 {
             //self.push_val(TaintType::InputSize(OpChain(Vec::new())));
-            self.push_val(TaintType::InputSize);
+            //self.push_val(TaintType::InputSize.into());
+            println!("TaintStack pushing InputSizeFormula...");
+            self.push_val(TaintTypeOrFormula::InputSizeFormula(Vec::new()));
 
             // TODO:
             // dont use TaintType::InputSize. instead use TaintStackElement::InputSizeFormula
@@ -514,7 +593,6 @@ impl<'lt> TaintStack<'lt> {
             // TaintStackElement::InputSizeFormula()
             // pub struct OpAndInputs (NumericOp, Vec<TaintType>);
             // pub struct InputSizeFormula (Vec<OpAndInputs>);
-
 
         } else if target_idx.0 == 2 {
             if ty.results.len() == 0 {
@@ -528,7 +606,7 @@ impl<'lt> TaintStack<'lt> {
             // TODO: get taint from other functions
             // this will be done using taint IO flow maps
             for &_result_ty in ty.results.iter() {
-                self.push_val(TaintType::Undetermined);
+                self.push_val(TaintType::Undetermined.into());
             }
         }
     }
@@ -536,7 +614,7 @@ impl<'lt> TaintStack<'lt> {
     pub fn const_instr(&mut self, ty: &InstrType, val: wasm::ast::Val) {
         println!("TaintStack.const_isntr val: {:?}", val);
         let mut result_taint = TaintType::Constant(val);
-        self.push_val(result_taint);
+        self.push_val(result_taint.into());
     }
 
     pub fn return_instr(&mut self, ty: &InstrType, source_idx: Idx<wasm::ast::highlevel::Function>, iidx: InstrPosition) {
@@ -567,13 +645,35 @@ impl<'lt> TaintStack<'lt> {
         if ty.inputs.len() == 1 {
             // TODO: TaintTypeOrFormula .into() TaintType here..
             // want to preserve formula
-            let taint_elem_1 = TaintType::from(self.pop_val());
-            println!("inputs: a={:?}", taint_elem_1);
+            let taint_elem_1 = self.pop_val();
+            println!("TaintStack.numeric_instr inputs: a={:?}", taint_elem_1);
             match taint_elem_1 {
-                TaintType::Constant(val) => {
+                TaintTypeOrFormula::TaintedVar(TaintType::Constant(val1)) => {
                     println!("yay got constant!");
                     panic!("to be implemented.");
                 },
+                TaintTypeOrFormula::InputSizeFormula(op_chain) => {
+                    println!("yay got unary op on InputSize!!");
+                    let mut new_op_chain: Vec<OpAndInputs> = Vec::new();
+                    for el in op_chain {
+                        new_op_chain.push(el.clone());
+                    }
+                    let op_inputs = vec![TaintType::InputSize];
+                    new_op_chain.push(OpAndInputs(op, op_inputs));
+
+                    if ty.results.len() == 1 {
+                        self.push_val(TaintTypeOrFormula::InputSizeFormula(new_op_chain));
+                        return;
+                    } else {
+                        panic!("numeric unary op with results.len != 1!! is possible?");
+                    }
+                }
+                TaintTypeOrFormula::TaintedVar(TaintType::InputSize) => {
+                    println!("ERROR. This should be an inputsize formula, not Inputsize!!");
+                    self.push_val(taint_elem_1);
+                    self.instr(ty);
+                    return;
+                }
                 _ => {
                     self.push_val(taint_elem_1);
                     self.instr(ty);
@@ -596,9 +696,21 @@ impl<'lt> TaintStack<'lt> {
                     println!("yay got two constants!");
                     //panic!("to be implemented.");
                     let result = do_binary_op(op, *val1, *val2);
-                    self.push_val(TaintType::Constant(result));
+                    self.push_val(TaintType::Constant(result).into());
                     return;
                 },
+                ( TaintTypeOrFormula::TaintedVar(TaintType::InputSize),
+                  TaintTypeOrFormula::TaintedVar(TaintType::Constant(val1)) )
+                |
+                ( TaintTypeOrFormula::TaintedVar(TaintType::Constant(val1)),
+                  TaintTypeOrFormula::TaintedVar(TaintType::InputSize) ) => {
+                      println!("ERROR! This should be an input size formula, not taintype::inputsize!!");
+                      self.push_val(taint_elem_2);
+                      self.push_val(taint_elem_1);
+                      self.instr(ty);
+                      return;
+                },
+
                 // TODO: need to handle from TaintType::InputSize to new formula...
                 ( TaintTypeOrFormula::InputSizeFormula(op_chain),
                   TaintTypeOrFormula::TaintedVar(TaintType::Constant(val1)) )
@@ -608,13 +720,14 @@ impl<'lt> TaintStack<'lt> {
                     println!("yay got inputSize and a constant!");
                     //panic!("to be implemented.");
                     //let result = do_binary_op(op, val1, val2);
-                    let mut new_op_chain = Vec::new();
+                    let mut new_op_chain: Vec<OpAndInputs> = Vec::new();
                     for el in op_chain {
-                        new_op_chain.push(el);
+                        new_op_chain.push(el.clone());
                     }
 
                     if ty.results.len() == 1 {
-                        self.push_val(TaintType::InputSize);
+                        //self.push_val(TaintTypeOrFormula::InputSizeFormula(Vec::new()));
+                        self.push_val(TaintTypeOrFormula::InputSizeFormula(new_op_chain));
                         return;
                     } else {
                         panic!("numeric op with results.len != 1!! to implement?");
@@ -630,8 +743,8 @@ impl<'lt> TaintStack<'lt> {
                     // pub struct InputSizeFormula (Vec<OpAndInputs>);
                 },
                 (_,_) => {
-                    self.push_val(TaintType::from(taint_elem_2));
-                    self.push_val(TaintType::from(taint_elem_1));
+                    self.push_val(taint_elem_2);
+                    self.push_val(taint_elem_1);
                     self.instr(ty);
                     return;
                 }
@@ -672,7 +785,7 @@ impl<'lt> TaintStack<'lt> {
             }
             for &_result_ty in ty.results.iter() {
                 // TODO: fix for call_indirect...
-                self.push_val(result_taint.unwrap());
+                self.push_val(result_taint.unwrap().into());
             }
         }
     }
