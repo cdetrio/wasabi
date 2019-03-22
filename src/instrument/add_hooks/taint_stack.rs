@@ -336,7 +336,9 @@ impl<'lt> TaintStack<'lt> {
     }
 
     pub fn push_val(&mut self, ty: TaintType) {
-        println!("TaintStack.push_val {:?}", ty);
+        println!("TaintStack.push_val: {:?}", ty);
+    //pub fn push_val(&mut self, ttof: TaintTypeOrFormula) {
+        //println!("TaintStack.push_val ttof {:?}", ttof);
         self.0.push(TaintedVar(ty))
         //self.0.push(ty)
     }
@@ -581,25 +583,44 @@ impl<'lt> TaintStack<'lt> {
         } else if ty.inputs.len() == 2 {
             // TODO: TaintTypeOrFormula .into() TaintType here..
             // want to preserve formula
-            let taint_elem_1 = TaintType::from(self.pop_val());
-            let taint_elem_2 = TaintType::from(self.pop_val());
+            //let taint_elem_1 = TaintType::from(self.pop_val());
+            //let taint_elem_2 = TaintType::from(self.pop_val());
+            let mut taint_elem_1 = self.pop_val();
+            let mut taint_elem_2 = self.pop_val();
             println!("inputs: a={:?}   b={:?}", taint_elem_1, taint_elem_2);
-            match (taint_elem_1, taint_elem_2) {
-                (TaintType::Constant(val1), TaintType::Constant(val2)) => {
+            match (&taint_elem_1, &taint_elem_2) {
+                //(TaintType::Constant(val1), TaintType::Constant(val2)) => {
+                (TaintTypeOrFormula::TaintedVar(TaintType::Constant(val1)),
+                TaintTypeOrFormula::TaintedVar(TaintType::Constant(val2))) => {
+
                     println!("yay got two constants!");
                     //panic!("to be implemented.");
-                    let result = do_binary_op(op, val1, val2);
+                    let result = do_binary_op(op, *val1, *val2);
                     self.push_val(TaintType::Constant(result));
                     return;
                 },
-                /*
-                (TaintType::InputSize(opchain), TaintType::Constant(val)) | (TaintType::Constant(val), TaintType::InputSize(opchain)) => {
+                // TODO: need to handle from TaintType::InputSize to new formula...
+                ( TaintTypeOrFormula::InputSizeFormula(op_chain),
+                  TaintTypeOrFormula::TaintedVar(TaintType::Constant(val1)) )
+                |
+                ( TaintTypeOrFormula::TaintedVar(TaintType::Constant(val1)),
+                  TaintTypeOrFormula::InputSizeFormula(op_chain) ) => {
                     println!("yay got inputSize and a constant!");
                     //panic!("to be implemented.");
                     //let result = do_binary_op(op, val1, val2);
-                    self.push_val(TaintType::InputSize(opchain));
-                    return;
-                    
+                    let mut new_op_chain = Vec::new();
+                    for el in op_chain {
+                        new_op_chain.push(el);
+                    }
+
+                    if ty.results.len() == 1 {
+                        self.push_val(TaintType::InputSize);
+                        return;
+                    } else {
+                        panic!("numeric op with results.len != 1!! to implement?");
+                    }
+
+
                     // TODO:
                     // dont use TaintType::InputSize. instead use TaintStackElement::InputSizeFormula
 
@@ -608,10 +629,9 @@ impl<'lt> TaintStack<'lt> {
                     // pub struct OpAndInputs (NumericOp, Vec<TaintType>);
                     // pub struct InputSizeFormula (Vec<OpAndInputs>);
                 },
-                */
                 (_,_) => {
-                    self.push_val(taint_elem_2);
-                    self.push_val(taint_elem_1);
+                    self.push_val(TaintType::from(taint_elem_2));
+                    self.push_val(TaintType::from(taint_elem_1));
                     self.instr(ty);
                     return;
                 }
