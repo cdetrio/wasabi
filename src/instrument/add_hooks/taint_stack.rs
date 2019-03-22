@@ -115,7 +115,7 @@ impl<'lt> CallGraph {
 
 #[derive(Debug)]
 pub struct BrToLoop {
-    br_conditional_var: TaintType,
+    br_conditional_var: TaintTypeOrFormula,
     br_position: InstrPosition,
     br_target: block_stack::BranchTarget,
 }
@@ -183,7 +183,7 @@ impl<'lt> ModFuncLoopControls {
                 println!("function {:?} loop control: {:?}", key, control);
 
                 match control.br_conditional_var {
-                    TaintType::Constant(v) => {
+                    TaintTypeOrFormula::TaintedVar(TaintType::Constant(v)) => {
                         match v {
                             wasm::ast::Val::I32(1) => {
                                 println!("DANGER will robinson! wasm has an infinite loop regardless of input!! do not run!!!");
@@ -249,6 +249,21 @@ impl From<TaintType> for TaintTypeOrFormula {
 }
 
 
+impl From<TaintTypeOrFormula> for TaintStackElement {
+    fn from(ttof: TaintTypeOrFormula) -> TaintStackElement {
+        match ttof {
+            TaintTypeOrFormula::TaintedVar(taint_ty) => {
+                TaintedVar(taint_ty)
+            },
+            TaintTypeOrFormula::InputSizeFormula(_opchain) => {
+                TaintStackElement::InputSizeFormula(_opchain)
+            }
+        }
+    }
+}
+
+
+
 
 /*
 fn clone_tainttype_or_formula(orig: &TaintTypeOrFormula) -> TaintTypeOrFormula {
@@ -282,7 +297,10 @@ pub struct TaintStack<'lt> (Vec<TaintStackElement>, HashMap<Idx<wasm::ast::Local
 
 #[derive(Debug, PartialEq)]
 enum TaintStackElement {
+//    TaintedVar(TaintType),
+//   TaintTypeOrFormula,
     TaintedVar(TaintType),
+    InputSizeFormula(OpChain),
     BlockBegin(BlockType),
     FunctionBegin,
 // TODO see add_hooks/mod.rs
@@ -293,6 +311,10 @@ impl TaintStackElement {
     pub fn to_taint(&self) -> TaintType {
         match self {
             TaintedVar(taint_ty) => *taint_ty,
+            TaintStackElement::InputSizeFormula(_op_chain) => {
+                println!("TaintStackElement InputSizeFormula converting to InputSize. NONO");
+                TaintType::InputSize
+            },
             BlockBegin(_block_ty) => TaintType::Undetermined,
             FunctionBegin => TaintType::Undetermined,
             /*
@@ -307,6 +329,7 @@ impl TaintStackElement {
     pub fn to_taint_or_formula(&self) -> TaintTypeOrFormula {
         match self {
             TaintedVar(taint_ty) => TaintTypeOrFormula::TaintedVar(*taint_ty),
+            TaintStackElement::InputSizeFormula(_op_chain) => TaintTypeOrFormula::InputSizeFormula(_op_chain.clone()),
             // TODO: panic on blockbegin and functionbegin?
             BlockBegin(_block_ty) => TaintType::Undetermined.into(),
             FunctionBegin => TaintType::Undetermined.into(),
@@ -408,8 +431,8 @@ impl<'lt> TaintStack<'lt> {
 
     pub fn push_val(&mut self, ttof: TaintTypeOrFormula) {
         println!("TaintStack.push_val ttof {:?}", ttof);
-        self.0.push(TaintedVar(ttof.into()))
-        //self.0.push(ttof)
+        //self.0.push(TaintedVar(ttof.into()))
+        self.0.push(ttof.into())
         //self.0.push(ty)
     }
 
@@ -423,12 +446,12 @@ impl<'lt> TaintStack<'lt> {
         println!("TaintStack add_loop_br_control for fn_id {:?}.  br_position: {:?}   br_target: {:?}", fn_id, br_position, br_target);
         //br_to_loop: BrToLoop
         let br_conditional_var = self.0.last().unwrap();
-        let br_conditional_taint_type = br_conditional_var.to_taint();
-        println!("br to loop conditional var has taint: {:?}", br_conditional_taint_type);
+        let br_conditional_taint = br_conditional_var.to_taint_or_formula();
+        println!("br to loop conditional var has taint: {:?}", br_conditional_taint);
         let br_to_loop = BrToLoop {
             br_position: br_position,
             br_target: br_target,
-            br_conditional_var: br_conditional_taint_type,
+            br_conditional_var: br_conditional_taint,
         };
         self.3.add_loop_br_control(fn_id, br_to_loop);
     }
@@ -439,7 +462,7 @@ impl<'lt> TaintStack<'lt> {
         match self.0.pop() {
             None => panic!("tried to pop from empty type stack"),
             Some(TaintedVar(taint_ty)) => taint_ty.into(),
-            //Some(TaintStackElement::InputSizeFormula(opchain)) => TaintTypeOrFormula::InputSizeFormula(opchain),
+            Some(TaintStackElement::InputSizeFormula(opchain)) => TaintTypeOrFormula::InputSizeFormula(opchain),
             Some(BlockBegin(_)) => panic!("expected ValType on type stack, but got block begin marker indicating empty block stack; full type stack was {:?}", self.0),
             Some(FunctionBegin) => panic!("expected ValType on type stack, but got function begin marker indicating empty block stack; full type stack was {:?}", self.0),
         }
@@ -566,7 +589,11 @@ impl<'lt> TaintStack<'lt> {
             let taint_type_or_formula = self.pop_val();
             // TODO: TaintTypeOrFormula into TaintType here..
             // want to preserve formula
-            input_taint_vec.push(TaintType::from(taint_type_or_formula));
+            //input_taint_vec.push(TaintType::from(taint_type_or_formula));
+            println!("doing taint_type_or_formula.into() in TaintStack.call...");
+            input_taint_vec.push(taint_type_or_formula.into());
+            println!("did taint_type_or_formula.into() in TaintStack.call.");
+            // this doesnt matter at the moment.. input_taint_vec only being printed (not used).
         }
 
         let call_to_func = CallToFunc {
@@ -725,6 +752,11 @@ impl<'lt> TaintStack<'lt> {
                         new_op_chain.push(el.clone());
                     }
 
+                    // todo: get order right...
+                    let op_inputs = vec![TaintType::InputSize, TaintType::Constant(*val1)];
+                    new_op_chain.push(OpAndInputs(op, op_inputs));
+
+                    println!("new_op_chain: {:?}", new_op_chain);
                     if ty.results.len() == 1 {
                         //self.push_val(TaintTypeOrFormula::InputSizeFormula(Vec::new()));
                         self.push_val(TaintTypeOrFormula::InputSizeFormula(new_op_chain));
@@ -757,6 +789,7 @@ impl<'lt> TaintStack<'lt> {
     /// convenience, pops and validates input_tys, then pushes the result_tys
     pub fn instr(&mut self, ty: &InstrType) {
         println!("TaintStack.instr..");
+        // br_if is handled here...
 
         // *.const ops have ty.inputs.len() == 0
         if ty.inputs.len() == 0 && ty.results.len() == 1 {
