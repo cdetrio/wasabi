@@ -20,6 +20,8 @@ use self::taint_stack::GlobalTaintMap;
 use self::taint_stack::ModFuncLoopControls;
 use self::taint_stack::CallGraph;
 //use self::taint_stack::BrToLoop;
+use self::taint_stack::TaintType;
+
 
 use self::taint_io::TaintIOStack;
 use self::taint_io::ModuleFuncTaintFlowMaps;
@@ -243,7 +245,11 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                         if let BlockStackElement::Function { .. } = block {
                             //taint_stack.instr(&InstrType::new(&[], &function.type_.results));
                             //taint_io_stack.instr(&InstrType::new(&[], &function.type_.results));
-                           println!("taint_io_stack.return_instr implicit return...");
+
+                            // taint_stack return types are never stored, so no point in processing them.
+                            //taint_stack.instr(&InstrType::new(&[], &function.type_.results));
+
+                            println!("taint_io_stack.return_instr implicit return...");
                             taint_io_stack.return_instr(&InstrType::new(&[], &function.type_.results), fidx, iidx);
                         }
                     }
@@ -313,7 +319,11 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                     //taint_stack.instr(&InstrType::new(&[], &function.type_.results));
                     //taint_io_stack.instr(&InstrType::new(&[], &function.type_.results));
 
+                    // taint_stack stack elements are just popped, nothing is done with them.
+                    // dont need to call taint_stack.return_instr, but doesnt hurt either.
                     taint_stack.return_instr(&InstrType::new(&[], &function.type_.results), fidx, iidx);
+
+                    // taint_io_stack saves the return vals to the IO flow map.
                     taint_io_stack.return_instr(&InstrType::new(&[], &function.type_.results), fidx, iidx);
 
                     unreachable = 1;
@@ -366,7 +376,9 @@ pub fn add_hooks(module: &mut Module, enabled_hooks: &EnabledHooks) -> Option<St
                     type_stack.push_val(ty);
 
                     let taint_ty = taint_stack.pop_val();
-                    taint_stack.push_val(taint_ty);
+                    //taint_stack.push_val(taint_ty);
+                    taint_stack.push_val(TaintType::from(taint_ty));
+                    
 
                     let taint_io_ty = taint_io_stack.pop_val();
                     taint_io_stack.push_val(taint_io_ty);

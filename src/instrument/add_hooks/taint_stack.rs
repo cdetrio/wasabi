@@ -3,6 +3,7 @@ use wasm::ast::{BlockType, InstrType, Idx, Memarg};
 //use wasm::ast::highlevel::{Function, GlobalOp::*, Instr, Instr::*, LocalOp::*, Module};
 use wasm::ast::highlevel::Instr;
 
+use wasm::ast::highlevel::NumericOp;
 
 
 use self::TaintStackElement::*;
@@ -12,13 +13,23 @@ use std::collections::HashMap;
 use super::block_stack;
 
 
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct OpAndInputs (NumericOp, Vec<TaintType>);
+
+type OpChain = Vec<OpAndInputs>;
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct InputSizeFormula (OpChain);
+
 // TaintType enum is ordered by dominance. when two values are combined in a wasm instruction, the output type is the dominant type.
 // so InputVal can taint anything lower (inputSize and Constant)
 // for a value to remain constant, it must only ever be tainted by other constants
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum TaintType {
     Constant(wasm::ast::Val), // value is derived only from constant values
     InputSize, // value is derived from getCallDataSize or constant values
+    //InputSize(OpChain), // this has a Vec, which prevents using Copy trait, which creates a world of borrowing errors
     InputVal, // value is derived from input data values
     Undetermined, // value is from a function that hasn't been analyzed yet
     MemoryVal, // temporary until memory taint tracking is implemented. just lets us know what we're missing
@@ -167,6 +178,50 @@ impl<'lt> ModFuncLoopControls {
 }
 
 
+#[derive(Debug, PartialEq)]
+pub enum TaintTypeOrFormula {
+    TaintedVar(TaintType),
+    InputSizeFormula(OpChain),
+}
+
+
+
+impl From<&mut TaintTypeOrFormula> for TaintType {
+    fn from(ttof: &mut TaintTypeOrFormula) -> TaintType {
+        match ttof {
+            TaintTypeOrFormula::TaintedVar(taint_ty) => {
+                *taint_ty
+            },
+            TaintTypeOrFormula::InputSizeFormula(_opchain) => {
+                TaintType::InputSize
+            }
+        }
+    }
+}
+
+
+impl From<TaintTypeOrFormula> for TaintType {
+    fn from(ttof: TaintTypeOrFormula) -> TaintType {
+        match ttof {
+            TaintTypeOrFormula::TaintedVar(taint_ty) => {
+                taint_ty
+            },
+            TaintTypeOrFormula::InputSizeFormula(_opchain) => {
+                TaintType::InputSize
+            }
+        }
+    }
+}
+
+impl From<TaintType> for TaintTypeOrFormula {
+    fn from(tt: TaintType) -> TaintTypeOrFormula {
+        match tt {
+            taint_ty => TaintTypeOrFormula::TaintedVar(taint_ty)
+        }
+    }
+}
+
+
 
 
 
@@ -178,16 +233,18 @@ enum TaintStackElement {
     TaintedVar(TaintType),
     BlockBegin(BlockType),
     FunctionBegin,
+    InputSizeFormula(OpChain),
 // TODO see add_hooks/mod.rs
 //    Unreachable,
 }
 
 impl TaintStackElement {
     pub fn to_taint(&self) -> TaintType {
-        match *self {
-            TaintedVar(taint_ty) => taint_ty,
+        match self {
+            TaintedVar(taint_ty) => *taint_ty,
             BlockBegin(_block_ty) => TaintType::Undetermined,
             FunctionBegin => TaintType::Undetermined,
+            TaintStackElement::InputSizeFormula(_op_chain) => TaintType::InputSize,
         }
     }
 }
@@ -305,11 +362,12 @@ impl<'lt> TaintStack<'lt> {
     }
 
     /// panics if stack is empty or if there was a block begin (and not a ValType)
-    pub fn pop_val(&mut self) -> TaintType {
+    pub fn pop_val(&mut self) -> TaintTypeOrFormula {
         println!("TaintStack.pop_val...");
         match self.0.pop() {
             None => panic!("tried to pop from empty type stack"),
-            Some(TaintedVar(taint_ty)) => taint_ty,
+            Some(TaintedVar(taint_ty)) => taint_ty.into(),
+            Some(TaintStackElement::InputSizeFormula(opchain)) => TaintTypeOrFormula::InputSizeFormula(opchain),
             Some(BlockBegin(_)) => panic!("expected ValType on type stack, but got block begin marker indicating empty block stack; full type stack was {:?}", self.0),
             Some(FunctionBegin) => panic!("expected ValType on type stack, but got function begin marker indicating empty block stack; full type stack was {:?}", self.0),
         }
@@ -359,7 +417,9 @@ impl<'lt> TaintStack<'lt> {
             wasm::ast::highlevel::LocalOp::SetLocal => {
                 let taint_elem = self.pop_val();
                 println!("setting local. stack var has taint: {:?}", taint_elem);
-                self.1.insert(local_idx, taint_elem);
+                // TODO: TaintTypeOrFormula .into() TaintType here..
+                // want to preserve formula
+                self.1.insert(local_idx, taint_elem.into());
             },
             wasm::ast::highlevel::LocalOp::TeeLocal => {
                 let taint_elem = self.0.last().unwrap();
@@ -400,7 +460,9 @@ impl<'lt> TaintStack<'lt> {
                 let taint_elem = self.pop_val();
                 //self.2.insert(global_idx, taint_elem);
                 println!("setting global. stack var has taint: {:?}", taint_elem);
-                (self.2).0.insert(global_idx, taint_elem);
+                // TODO: TaintTypeOrFormula .into() TaintType here..
+                // want to preserve formula
+                (self.2).0.insert(global_idx, taint_elem.into());
             },
         }
     }
@@ -422,7 +484,10 @@ impl<'lt> TaintStack<'lt> {
         let mut input_taint_vec = Vec::new();
 
         for &_input_ty in ty.inputs.iter() {
-            input_taint_vec.push(self.pop_val());
+            let taint_type_or_formula = self.pop_val();
+            // TODO: TaintTypeOrFormula into TaintType here..
+            // want to preserve formula
+            input_taint_vec.push(TaintType::from(taint_type_or_formula));
         }
 
         let call_to_func = CallToFunc {
@@ -435,16 +500,24 @@ impl<'lt> TaintStack<'lt> {
 
         //println!("Calling to function")
 
-        if target_idx.0 == 2 {
-            // calling callDataCopy
-            // callDataCopy will taint memory segment with tainttype `inputVal`
-        }
-
         // TODO: look up getCallDataSize instead of using index 3
         if target_idx.0 == 3 {
+            //self.push_val(TaintType::InputSize(OpChain(Vec::new())));
             self.push_val(TaintType::InputSize);
+
+            // TODO:
+            // dont use TaintType::InputSize. instead use TaintStackElement::InputSizeFormula
+
+            // TaintType::InputSize(OpChain(Vec::new()))
+            // TaintStackElement::InputSizeFormula()
+            // pub struct OpAndInputs (NumericOp, Vec<TaintType>);
+            // pub struct InputSizeFormula (Vec<OpAndInputs>);
+
+
         } else if target_idx.0 == 2 {
             if ty.results.len() == 0 {
+                // calling callDataCopy
+                // callDataCopy will taint memory segment with tainttype `inputVal`
                 println!("Call to callDataCopy.  no results");
             } else {
                 panic!("Call to callDataCopy and have result length?!");
@@ -490,7 +563,9 @@ impl<'lt> TaintStack<'lt> {
         println!("TaintStack.numeric_instr.. op: {:?}   inputs.len(): {:?}", op, ty.inputs.len());
 
         if ty.inputs.len() == 1 {
-            let taint_elem_1 = self.pop_val();
+            // TODO: TaintTypeOrFormula .into() TaintType here..
+            // want to preserve formula
+            let taint_elem_1 = TaintType::from(self.pop_val());
             println!("inputs: a={:?}", taint_elem_1);
             match taint_elem_1 {
                 TaintType::Constant(val) => {
@@ -504,8 +579,10 @@ impl<'lt> TaintStack<'lt> {
                 }
             }
         } else if ty.inputs.len() == 2 {
-            let taint_elem_1 = self.pop_val();
-            let taint_elem_2 = self.pop_val();
+            // TODO: TaintTypeOrFormula .into() TaintType here..
+            // want to preserve formula
+            let taint_elem_1 = TaintType::from(self.pop_val());
+            let taint_elem_2 = TaintType::from(self.pop_val());
             println!("inputs: a={:?}   b={:?}", taint_elem_1, taint_elem_2);
             match (taint_elem_1, taint_elem_2) {
                 (TaintType::Constant(val1), TaintType::Constant(val2)) => {
@@ -515,6 +592,23 @@ impl<'lt> TaintStack<'lt> {
                     self.push_val(TaintType::Constant(result));
                     return;
                 },
+                /*
+                (TaintType::InputSize(opchain), TaintType::Constant(val)) | (TaintType::Constant(val), TaintType::InputSize(opchain)) => {
+                    println!("yay got inputSize and a constant!");
+                    //panic!("to be implemented.");
+                    //let result = do_binary_op(op, val1, val2);
+                    self.push_val(TaintType::InputSize(opchain));
+                    return;
+                    
+                    // TODO:
+                    // dont use TaintType::InputSize. instead use TaintStackElement::InputSizeFormula
+
+                    // TaintType::InputSize(OpChain(Vec::new()))
+                    // TaintStackElement::InputSizeFormula()
+                    // pub struct OpAndInputs (NumericOp, Vec<TaintType>);
+                    // pub struct InputSizeFormula (Vec<OpAndInputs>);
+                },
+                */
                 (_,_) => {
                     self.push_val(taint_elem_2);
                     self.push_val(taint_elem_1);
@@ -542,10 +636,14 @@ impl<'lt> TaintStack<'lt> {
                 let taint_elem = self.pop_val();
                 match result_taint {
                     Some(val) => {
-                        result_taint = Some(taint_variable(result_taint.unwrap(), taint_elem));
+                        // TODO: TaintTypeOrFormula .into() TaintType here..
+                        // want to preserve formula
+                        result_taint = Some(taint_variable(result_taint.unwrap(), taint_elem.into()));
                     }
                     None => {
-                        result_taint = Some(taint_elem);
+                        // TODO: TaintTypeOrFormula .into() TaintType here..
+                        // want to preserve formula
+                        result_taint = Some(taint_elem.into());
                     }
                 }
 

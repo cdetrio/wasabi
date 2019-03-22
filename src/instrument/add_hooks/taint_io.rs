@@ -23,6 +23,8 @@ pub enum InputVar {
     LocalVar(Idx<wasm::ast::Local>),
     GlobalVar(Idx<wasm::ast::highlevel::Global>),
     Constant,
+    InputSize,
+    Undetermined,
     MemoryVal, // a value loaded/derived from memory
 }
 
@@ -130,6 +132,8 @@ impl VarTaintSet {
                     },
                     InputVar::Constant => InputVar::Constant,
                     InputVar::MemoryVal => InputVar::MemoryVal,
+                    InputVar::InputSize => InputVar::InputSize,
+                    InputVar::Undetermined => InputVar::Undetermined,
                 };
                 new_var
          }).collect();
@@ -153,6 +157,8 @@ fn clone_input_vector(orig: &Vec<InputVar>) -> Vec<InputVar> {
                 },
                 InputVar::Constant => InputVar::Constant,
                 InputVar::MemoryVal => InputVar::MemoryVal,
+                InputVar::InputSize => InputVar::InputSize,
+                InputVar::Undetermined => InputVar::Undetermined,
             };
             new_var
      }).collect();
@@ -402,6 +408,8 @@ impl<'lt> TaintIOStack<'lt> {
                                 },
                                 InputVar::Constant => InputVar::Constant,
                                 InputVar::MemoryVal => InputVar::MemoryVal,
+                                InputVar::InputSize => InputVar::InputSize,
+                                InputVar::Undetermined => InputVar::Undetermined,
                             };
                             new_var
                      }).collect();
@@ -441,6 +449,8 @@ impl<'lt> TaintIOStack<'lt> {
                             },
                             InputVar::Constant => InputVar::Constant,
                             InputVar::MemoryVal => InputVar::MemoryVal,
+                            InputVar::InputSize => InputVar::InputSize,
+                            InputVar::Undetermined => InputVar::Undetermined,
                         };
                         new_var
                  }).collect();
@@ -502,16 +512,60 @@ impl<'lt> TaintIOStack<'lt> {
 
         let mut call_input_set = Vec::new();
 
+        /*
+        let mut input_taint_vec = Vec::new();
+        for &_input_ty in ty.inputs.iter() {
+            input_taint_vec.push(self.pop_val());
+        }
+        */
+
         for &input_ty in ty.inputs.iter() {
             let input_elem = self.pop_val();
             //call_input_set = taint_stack_var(call_input_set, *input_elem.to_taint_set().to_vec());
             call_input_set = taint_stack_var(&call_input_set, VarTaintSet::from(input_elem).to_vec_mut());
         }
 
+        // assuming that inputs to a call will taint the return val
+        // TODO: fix
+        //let call_return_taint_set = clone_input_vector(&call_input_set);
+
+        let mut call_return_taint_set = Vec::new();
+
+        // TODO: look up getCallDataSize instead of using index 3
+        if target_idx.0 == 3 {
+            // self.push_val(VarTaintSet(stack_var).into());
+
+            call_return_taint_set.push(InputVar::InputSize);
+            self.push_val(VarTaintSet(call_return_taint_set).into());
+        } else if target_idx.0 == 2 {
+            if ty.results.len() == 0 {
+                // calling callDataCopy
+                // Note from TaintStack: TODO: callDataCopy will taint memory segment with tainttype `inputVal`
+                println!("Call to callDataCopy.  no results");
+            } else {
+                panic!("Call to callDataCopy and have result vars?! this shouldnt happen.");
+            }
+        } else {
+            // Note from TaintStack: TODO: get taint from other functions. this will be done using taint IO flow maps
+            
+            if (ty.results.len() > 1) {
+                panic!("calling a function with multiple return vals! wasm doesnt have this feature.");
+            }
+
+            if (ty.results.len() == 1) {
+                call_return_taint_set.push(InputVar::Undetermined);
+                self.push_val(VarTaintSet(call_return_taint_set).into());
+                //taint_stack_var(&call_input_set, VarTaintSet::from(input_elem).to_vec_mut());
+            }
+
+        }
+
+        /*
         for &_result_ty in ty.results.iter() {
             let call_input_set_copy = clone_input_vector(&call_input_set);
             self.push_val(VarTaintSet(call_input_set_copy).into());
         }
+        */
 
     }
     

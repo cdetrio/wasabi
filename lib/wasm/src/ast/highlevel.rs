@@ -161,7 +161,7 @@ pub enum StoreOp {
     I64Store32,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd)]
 pub enum NumericOp {
     /* Unary */
     I32Eqz,
